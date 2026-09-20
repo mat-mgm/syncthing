@@ -28,6 +28,7 @@ import (
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/ignore/ignoreresult"
 	"github.com/syncthing/syncthing/lib/osutil"
+	"github.com/syncthing/syncthing/lib/syncrules"
 )
 
 const escapePrefix = "#escape"
@@ -126,6 +127,7 @@ type Matcher struct {
 	patterns       []Pattern // patterns including those from included files
 	curHash        string
 	changeDetector ChangeDetector
+	syncRules      *syncrules.RuleSet
 	mut            sync.Mutex
 }
 
@@ -134,6 +136,24 @@ type Option func(*Matcher)
 
 // WithChangeDetector sets a custom ChangeDetector. The default is to simply
 // use the on disk modtime for comparison.
+func WithSyncRules(rs *syncrules.RuleSet) Option {
+	return func(m *Matcher) {
+		m.syncRules = rs
+	}
+}
+
+func (m *Matcher) SetSyncRules(rs *syncrules.RuleSet) {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+	m.syncRules = rs
+}
+
+func (m *Matcher) SyncRules() *syncrules.RuleSet {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+	return m.syncRules
+}
+
 func WithChangeDetector(cd ChangeDetector) Option {
 	return func(m *Matcher) {
 		m.changeDetector = cd
@@ -229,6 +249,19 @@ func (m *Matcher) Match(file string) ignoreresult.R {
 
 	m.mut.Lock()
 	defer m.mut.Unlock()
+
+	if m.syncRules != nil && !m.syncRules.Empty() {
+		entry := syncrules.FileEntry{Path: file}
+		res := m.syncRules.Evaluate(entry)
+		if res.Matched {
+			if res.Action == syncrules.ActionExclude {
+				return ignoreresult.IgnoreAndSkip
+			}
+			if res.Action == syncrules.ActionInclude && len(m.patterns) == 0 {
+				return ignoreresult.NotIgnored
+			}
+		}
+	}
 
 	if len(m.patterns) == 0 {
 		return ignoreresult.NotIgnored

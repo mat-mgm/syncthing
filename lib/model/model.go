@@ -337,6 +337,9 @@ func (m *model) fatal(err error) {
 // Need to hold lock on m.mut when calling this.
 func (m *model) addAndStartFolderLocked(cfg config.FolderConfiguration) {
 	ignores := ignore.New(cfg.Filesystem())
+	if !cfg.SyncRules.Empty() {
+		ignores.SetSyncRules(&cfg.SyncRules)
+	}
 	if cfg.Type != config.FolderTypeReceiveEncrypted {
 		if err := ignores.Load(".stignore"); err != nil && !fs.IsNotExist(err) {
 			slog.Error("Failed to load ignores", slogutil.Error(err))
@@ -348,6 +351,9 @@ func (m *model) addAndStartFolderLocked(cfg config.FolderConfiguration) {
 
 // Only needed for testing, use addAndStartFolderLocked instead.
 func (m *model) addAndStartFolderLockedWithIgnores(cfg config.FolderConfiguration, ignores *ignore.Matcher) {
+	if ignores != nil && !cfg.SyncRules.Empty() {
+		ignores.SetSyncRules(&cfg.SyncRules)
+	}
 	m.folderCfgs[cfg.ID] = cfg
 	m.folderIgnores[cfg.ID] = ignores
 

@@ -25,6 +25,7 @@ import (
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/structutil"
+	"github.com/syncthing/syncthing/lib/syncrules"
 )
 
 var (
@@ -88,6 +89,7 @@ type FolderConfiguration struct {
 	SendXattrs              bool                        `json:"sendXattrs" xml:"sendXattrs"`
 	BlockIndexing           bool                        `json:"blockIndexing" xml:"blockIndexing" default:"true"`
 	XattrFilter             XattrFilter                 `json:"xattrFilter" xml:"xattrFilter"`
+	SyncRules               syncrules.RuleSet           `json:"syncRules,omitempty" xml:"syncRules,omitempty" nodefault:"true"`
 	// Legacy deprecated
 	DeprecatedReadOnly       bool    `json:"-" xml:"ro,attr,omitempty"`        // Deprecated: Do not use.
 	DeprecatedMinDiskFreePct float64 `json:"-" xml:"minDiskFreePct,omitempty"` // Deprecated: Do not use.

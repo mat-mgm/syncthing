@@ -29,6 +29,7 @@ import (
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
+	"github.com/syncthing/syncthing/lib/syncrules"
 )
 
 var device1, device2, device3, device4 protocol.DeviceID
@@ -126,6 +127,12 @@ func TestDefaultValues(t *testing.T) {
 					MaxTotalSize:       4096,
 				},
 				BlockIndexing: true,
+				SyncRules: syncrules.RuleSet{
+					GitRules:  []syncrules.GitRule{},
+					PathRules: []syncrules.PathRule{},
+					SizeRules: []syncrules.SizeRule{},
+					TypeRules: []syncrules.TypeRule{},
+				},
 			},
 			Device: DeviceConfiguration{
 				Addresses:       []string{"dynamic"},
@@ -205,6 +212,12 @@ func TestDeviceConfig(t *testing.T) {
 					Entries:            []XattrFilterEntry{},
 				},
 				BlockIndexing: true,
+				SyncRules: syncrules.RuleSet{
+					GitRules:  []syncrules.GitRule{},
+					PathRules: []syncrules.PathRule{},
+					SizeRules: []syncrules.SizeRule{},
+					TypeRules: []syncrules.TypeRule{},
+				},
 			},
 		}
 

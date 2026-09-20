@@ -51,6 +51,7 @@ import (
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
+	"github.com/syncthing/syncthing/lib/syncrules"
 	"github.com/syncthing/syncthing/lib/syncthing"
 	"github.com/syncthing/syncthing/lib/upgrade"
 )
@@ -972,6 +973,7 @@ type debugCmd struct {
 	DatabaseStatistics databaseStatsCmd  `cmd:"" help:"Display database size statistics"`
 	DatabaseCounts     databaseCountsCmd `cmd:"" help:"Display database folder counts"`
 	DatabaseFile       databaseFileCmd   `cmd:"" help:"Display database file metadata"`
+	TestRules          syncRulesCmd      `cmd:"" help:"Test path against folder sync rules"`
 }
 
 type resetDatabaseCmd struct{}
@@ -1099,4 +1101,41 @@ func (m migratingAPI) Serve(ctx context.Context) error {
 	}()
 	<-ctx.Done()
 	return srv.Close()
+}
+
+type syncRulesCmd struct {
+	Folder string `placeholder:"FOLDER-ID" help:"Folder ID to evaluate rules from" default:""`
+	Path   string `arg:"" placeholder:"PATH" help:"Path to test against sync rules"`
+}
+
+func (c syncRulesCmd) Run() error {
+	cfgFile := locations.Get(locations.ConfigFile)
+	cfg, _, err := config.Load(cfgFile, protocol.EmptyDeviceID, events.NoopLogger)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration from %s: %w", cfgFile, err)
+	}
+	rawCfg := cfg.RawCopy()
+	var folder config.FolderConfiguration
+	if c.Folder != "" {
+		f, ok := cfg.Folder(c.Folder)
+		if !ok {
+			return fmt.Errorf("folder %q not found", c.Folder)
+		}
+		folder = f
+	} else if len(rawCfg.Folders) > 0 {
+		folder = rawCfg.Folders[0]
+	} else {
+		folder = rawCfg.Defaults.Folder
+	}
+
+	res := folder.SyncRules.Evaluate(syncrules.FileEntry{
+		Path: c.Path,
+	})
+
+	fmt.Printf("Path:    %s\n", c.Path)
+	fmt.Printf("Action:  %s\n", res.Action)
+	fmt.Printf("Matched: %v\n", res.Matched)
+	fmt.Printf("Rule:    %s\n", res.RuleName)
+	fmt.Printf("Reason:  %s\n", res.Reason)
+	return nil
 }

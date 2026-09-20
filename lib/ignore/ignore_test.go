@@ -21,6 +21,7 @@ import (
 	"github.com/syncthing/syncthing/lib/ignore/ignoreresult"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/rand"
+	"github.com/syncthing/syncthing/lib/syncrules"
 )
 
 const escapePrefixEqual = escapePrefix + "="
@@ -1601,5 +1602,49 @@ func TestIgnoreThroughSymlink(t *testing.T) {
 	}
 	if pats.Match("afile").IsIgnored() {
 		t.Error("afile should not be ignored")
+	}
+}
+
+func TestMatcherWithSyncRules(t *testing.T) {
+	fs := newTestFS()
+	m := New(fs)
+
+	rs := syncrules.NewRuleSet()
+	rs.GitRules = []syncrules.GitRule{
+		{Name: "Git", Mode: syncrules.GitExcludeMetadata},
+	}
+	rs.TypeRules = []syncrules.TypeRule{
+		{Name: "ExcludeArchives", Extensions: []string{".iso", ".zip"}, Action: syncrules.ActionExclude},
+	}
+	rs.PathRules = []syncrules.PathRule{
+		{Name: "IncludeSpecificZip", Pattern: "important/archive.zip", Action: syncrules.ActionInclude},
+	}
+	if err := rs.Compile(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.SetSyncRules(rs)
+
+	// .git metadata should be ignored
+	if !m.Match(".git/HEAD").IsIgnored() {
+		t.Error("Expected .git/HEAD to be ignored by sync rules")
+	}
+	if !m.Match("subproject/.git/config").IsIgnored() {
+		t.Error("Expected subproject/.git/config to be ignored by sync rules")
+	}
+
+	// .iso should be ignored by type rule
+	if !m.Match("download/ubuntu.iso").IsIgnored() {
+		t.Error("Expected download/ubuntu.iso to be ignored by sync rules")
+	}
+
+	// important/archive.zip should NOT be ignored (path rule override)
+	if m.Match("important/archive.zip").IsIgnored() {
+		t.Error("Expected important/archive.zip to NOT be ignored")
+	}
+
+	// regular file should not be ignored
+	if m.Match("document.txt").IsIgnored() {
+		t.Error("Expected document.txt to NOT be ignored")
 	}
 }
