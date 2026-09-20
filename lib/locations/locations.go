@@ -107,7 +107,20 @@ func SetBaseDir(baseDirName BaseDirEnum, path string) error {
 }
 
 func Get(location LocationEnum) string {
-	return locations[location]
+	p := locations[location]
+	if location == ConfigFile && strings.HasSuffix(p, ".xml") {
+		if !fileExists(p) {
+			yamlPath := strings.TrimSuffix(p, ".xml") + ".yaml"
+			if fileExists(yamlPath) {
+				return yamlPath
+			}
+			ymlPath := strings.TrimSuffix(p, ".xml") + ".yml"
+			if fileExists(ymlPath) {
+				return ymlPath
+			}
+		}
+	}
+	return p
 }
 
 func GetBaseDir(baseDir BaseDirEnum) string {

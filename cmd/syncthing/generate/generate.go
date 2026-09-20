@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
@@ -26,6 +27,7 @@ import (
 type CLI struct {
 	GUIUser       string `placeholder:"STRING" help:"Specify new GUI authentication user name"`
 	GUIPassword   string `placeholder:"STRING" help:"Specify new GUI authentication password (use - to read from standard input)"`
+	Format        string `placeholder:"xml|yaml" help:"Config file format to generate (xml or yaml)" default:""`
 	NoPortProbing bool   `help:"Don't try to find free ports for GUI and listen addresses on first startup" env:"STNOPORTPROBING"`
 }
 
@@ -40,13 +42,17 @@ func (c *CLI) Run() error {
 		c.GUIPassword = string(password)
 	}
 
-	if err := Generate(locations.GetBaseDir(locations.ConfigBaseDir), c.GUIUser, c.GUIPassword, c.NoPortProbing); err != nil {
+	if err := GenerateWithFormat(locations.GetBaseDir(locations.ConfigBaseDir), c.GUIUser, c.GUIPassword, c.Format, c.NoPortProbing); err != nil {
 		return fmt.Errorf("failed to generate config and keys: %w", err)
 	}
 	return nil
 }
 
 func Generate(confDir, guiUser, guiPassword string, skipPortProbing bool) error {
+	return GenerateWithFormat(confDir, guiUser, guiPassword, "", skipPortProbing)
+}
+
+func GenerateWithFormat(confDir, guiUser, guiPassword, format string, skipPortProbing bool) error {
 	dir, err := fs.ExpandTilde(confDir)
 	if err != nil {
 		return err
@@ -73,6 +79,11 @@ func Generate(confDir, guiUser, guiPassword string, skipPortProbing bool) error 
 	slog.Info("Calculated device ID", slog.String("device", myID.String()))
 
 	cfgFile := locations.Get(locations.ConfigFile)
+	if strings.ToLower(format) == "yaml" || strings.ToLower(format) == "yml" {
+		if strings.HasSuffix(cfgFile, ".xml") {
+			cfgFile = strings.TrimSuffix(cfgFile, ".xml") + ".yaml"
+		}
+	}
 	cfg, _, err := config.Load(cfgFile, myID, events.NoopLogger)
 	if fs.IsNotExist(err) {
 		if cfg, err = syncthing.DefaultConfig(cfgFile, myID, events.NoopLogger, skipPortProbing); err != nil {

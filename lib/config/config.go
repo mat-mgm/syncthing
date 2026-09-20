@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/fs"
@@ -184,6 +186,72 @@ func ReadXML(r io.Reader, myID protocol.DeviceID) (Configuration, int, error) {
 		return Configuration{}, originalVersion, err
 	}
 	return cfg.Configuration, originalVersion, nil
+}
+
+func ReadYAML(r io.Reader, myID protocol.DeviceID) (Configuration, int, error) {
+	bs, err := io.ReadAll(r)
+	if err != nil {
+		return Configuration{}, 0, err
+	}
+
+	jsonBS, err := yaml.YAMLToJSON(bs)
+	if err != nil {
+		return Configuration{}, 0, fmt.Errorf("invalid YAML syntax: %w", err)
+	}
+
+	var cfg Configuration
+	structutil.SetDefaults(&cfg)
+
+	if err := json.Unmarshal(jsonBS, &cfg); err != nil {
+		return Configuration{}, 0, err
+	}
+
+	var rawFoldersDevices struct {
+		Folders []json.RawMessage `json:"folders"`
+		Devices []json.RawMessage `json:"devices"`
+	}
+	if err := json.Unmarshal(jsonBS, &rawFoldersDevices); err != nil {
+		return Configuration{}, 0, err
+	}
+
+	if len(rawFoldersDevices.Folders) > 0 {
+		cfg.Folders = make([]FolderConfiguration, len(rawFoldersDevices.Folders))
+		for i, raw := range rawFoldersDevices.Folders {
+			cfg.Folders[i] = cfg.Defaults.Folder.Copy()
+			if err := json.Unmarshal(raw, &cfg.Folders[i]); err != nil {
+				return Configuration{}, 0, err
+			}
+		}
+	}
+
+	if len(rawFoldersDevices.Devices) > 0 {
+		cfg.Devices = make([]DeviceConfiguration, len(rawFoldersDevices.Devices))
+		for i, raw := range rawFoldersDevices.Devices {
+			cfg.Devices[i] = cfg.Defaults.Device.Copy()
+			if err := json.Unmarshal(raw, &cfg.Devices[i]); err != nil {
+				return Configuration{}, 0, err
+			}
+		}
+	}
+
+	originalVersion := cfg.Version
+	if err := cfg.prepare(myID); err != nil {
+		return Configuration{}, originalVersion, err
+	}
+	return cfg, originalVersion, nil
+}
+
+func (cfg *Configuration) WriteYAML(w io.Writer) error {
+	jsonBS, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	yamlBS, err := yaml.JSONToYAML(jsonBS)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(yamlBS)
+	return err
 }
 
 func ReadJSON(r io.Reader, myID protocol.DeviceID) (Configuration, error) {

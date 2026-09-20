@@ -9,14 +9,18 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"strings"
 
 	"github.com/thejerf/suture/v4"
 
@@ -161,18 +165,50 @@ func Wrap(path string, cfg Configuration, myID protocol.DeviceID, evLogger event
 // The returned Wrapper is a suture.Service, thus needs to be started (added to
 // a supervisor).
 func Load(path string, myID protocol.DeviceID, evLogger events.Logger) (Wrapper, int, error) {
-	fd, err := os.Open(path)
+	actualPath := path
+	if _, err := os.Stat(actualPath); errors.Is(err, os.ErrNotExist) {
+		if strings.HasSuffix(path, ".xml") {
+			yamlCandidate := strings.TrimSuffix(path, ".xml") + ".yaml"
+			if _, err := os.Stat(yamlCandidate); err == nil {
+				actualPath = yamlCandidate
+			} else {
+				ymlCandidate := strings.TrimSuffix(path, ".xml") + ".yml"
+				if _, err := os.Stat(ymlCandidate); err == nil {
+					actualPath = ymlCandidate
+				}
+			}
+		}
+	}
+
+	fd, err := os.Open(actualPath)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer fd.Close()
 
-	cfg, originalVersion, err := ReadXML(fd, myID)
+	bs, err := io.ReadAll(fd)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	return Wrap(path, cfg, myID, evLogger), originalVersion, nil
+	var cfg Configuration
+	var originalVersion int
+
+	isYAML := strings.HasSuffix(actualPath, ".yaml") || strings.HasSuffix(actualPath, ".yml")
+	trimmed := bytes.TrimSpace(bs)
+	if isYAML || (len(trimmed) > 0 && !bytes.HasPrefix(trimmed, []byte("<"))) {
+		cfg, originalVersion, err = ReadYAML(bytes.NewReader(bs), myID)
+		if err != nil && bytes.HasPrefix(trimmed, []byte("<")) {
+			cfg, originalVersion, err = ReadXML(bytes.NewReader(bs), myID)
+		}
+	} else {
+		cfg, originalVersion, err = ReadXML(bytes.NewReader(bs), myID)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return Wrap(actualPath, cfg, myID, evLogger), originalVersion, nil
 }
 
 func (w *wrapper) ConfigPath() string {
@@ -511,10 +547,19 @@ func (w *wrapper) Save() error {
 		return err
 	}
 
-	if err := w.cfg.WriteXML(osutil.LineEndingsWriter(fd)); err != nil {
-		l.Debugln("WriteXML:", err)
-		fd.Close()
-		return err
+	isYAML := strings.HasSuffix(w.path, ".yaml") || strings.HasSuffix(w.path, ".yml")
+	if isYAML {
+		if err := w.cfg.WriteYAML(fd); err != nil {
+			l.Debugln("WriteYAML:", err)
+			fd.Close()
+			return err
+		}
+	} else {
+		if err := w.cfg.WriteXML(osutil.LineEndingsWriter(fd)); err != nil {
+			l.Debugln("WriteXML:", err)
+			fd.Close()
+			return err
+		}
 	}
 
 	if err := fd.Close(); err != nil {
