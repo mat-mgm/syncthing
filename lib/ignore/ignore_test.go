@@ -1648,3 +1648,42 @@ func TestMatcherWithSyncRules(t *testing.T) {
 		t.Error("Expected document.txt to NOT be ignored")
 	}
 }
+
+func TestMatcherWithSyncRulesAndIgnoreFile(t *testing.T) {
+	fs := newTestFS()
+	m := New(fs)
+
+	// Add .stignore patterns
+	if err := m.Parse(strings.NewReader("*.bak\ntemp*\n"), ".stignore"); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := syncrules.NewRuleSet()
+	rs.PathRules = []syncrules.PathRule{
+		{Name: "ExcludeLargeIso", Pattern: "*.iso", Action: syncrules.ActionExclude},
+	}
+	if err := rs.Compile(); err != nil {
+		t.Fatal(err)
+	}
+	m.SetSyncRules(rs)
+
+	// .bak matches .stignore
+	if !m.Match("document.bak").IsIgnored() {
+		t.Error("Expected document.bak to be ignored via .stignore")
+	}
+
+	// temp* matches .stignore
+	if !m.Match("temp_file.log").IsIgnored() {
+		t.Error("Expected temp_file.log to be ignored via .stignore")
+	}
+
+	// .iso matches sync rule exclude
+	if !m.Match("ubuntu.iso").IsIgnored() {
+		t.Error("Expected ubuntu.iso to be ignored via sync rules")
+	}
+
+	// normal file matches neither
+	if m.Match("project/main.go").IsIgnored() {
+		t.Error("Expected project/main.go to NOT be ignored")
+	}
+}

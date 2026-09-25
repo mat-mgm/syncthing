@@ -234,6 +234,162 @@ func TestRuleSetPrecedence(t *testing.T) {
 	}
 }
 
+func TestActionMarshaling(t *testing.T) {
+	cases := []struct {
+		text     string
+		expected syncrules.Action
+	}{
+		{"include", syncrules.ActionInclude},
+		{"allow", syncrules.ActionInclude},
+		{"sync", syncrules.ActionInclude},
+		{"exclude", syncrules.ActionExclude},
+		{"ignore", syncrules.ActionExclude},
+		{"drop", syncrules.ActionExclude},
+		{"skip-file", syncrules.ActionExclude},
+		{"skip", syncrules.ActionSkip},
+		{"none", syncrules.ActionSkip},
+		{"pass", syncrules.ActionSkip},
+		{"", syncrules.ActionSkip},
+	}
+
+	for _, tc := range cases {
+		var a syncrules.Action
+		if err := a.UnmarshalText([]byte(tc.text)); err != nil {
+			t.Errorf("UnmarshalText(%q) unexpected error: %v", tc.text, err)
+		}
+		if a != tc.expected {
+			t.Errorf("UnmarshalText(%q) expected %v, got %v", tc.text, tc.expected, a)
+		}
+	}
+
+	var badAction syncrules.Action
+	if err := badAction.UnmarshalText([]byte("invalid-action-123")); err == nil {
+		t.Error("Expected error for invalid action text, got nil")
+	}
+
+	bs, err := syncrules.ActionInclude.MarshalText()
+	if err != nil || string(bs) != "include" {
+		t.Errorf("MarshalText(ActionInclude) = %s, err = %v", string(bs), err)
+	}
+}
+
+func TestFileEntryNormalization(t *testing.T) {
+	e := syncrules.FileEntry{
+		Path: "/folder/subfolder/file.PDF",
+	}
+
+	norm := e.NormalizedPath()
+	if norm != "folder/subfolder/file.PDF" {
+		t.Errorf("NormalizedPath() expected folder/subfolder/file.PDF, got %q", norm)
+	}
+
+	if e.Name() != "file.PDF" {
+		t.Errorf("Name() expected file.PDF, got %q", e.Name())
+	}
+
+	if e.Ext() != ".pdf" {
+		t.Errorf("Ext() expected lowercase .pdf, got %q", e.Ext())
+	}
+}
+
+func TestPathRuleRegexAndCaseSensitivity(t *testing.T) {
+	// 1. Regex test
+	regexRule := syncrules.PathRule{
+		Name:          "LogArchiveRegex",
+		Pattern:       `^logs/\d{4}/archive\.tar\.gz$`,
+		IsRegex:       true,
+		CaseSensitive: true,
+		Action:        syncrules.ActionExclude,
+	}
+	if err := regexRule.Compile(); err != nil {
+		t.Fatalf("Compile regex rule failed: %v", err)
+	}
+
+	matchEntry := syncrules.FileEntry{Path: "logs/2026/archive.tar.gz"}
+	action, matched, _ := regexRule.Eval(matchEntry)
+	if !matched || action != syncrules.ActionExclude {
+		t.Errorf("Expected regex to match %q, got matched=%v action=%v", matchEntry.Path, matched, action)
+	}
+
+	nomatchEntry := syncrules.FileEntry{Path: "logs/abc/archive.tar.gz"}
+	action, matched, _ = regexRule.Eval(nomatchEntry)
+	if matched || action != syncrules.ActionSkip {
+		t.Errorf("Expected regex to not match %q, got matched=%v action=%v", nomatchEntry.Path, matched, action)
+	}
+
+	// 2. Case sensitive glob test
+	caseRule := syncrules.PathRule{
+		Name:          "CaseSensitiveGlob",
+		Pattern:       "docs/*.TXT",
+		CaseSensitive: true,
+		Action:        syncrules.ActionInclude,
+	}
+	if err := caseRule.Compile(); err != nil {
+		t.Fatalf("Compile case rule failed: %v", err)
+	}
+
+	upperEntry := syncrules.FileEntry{Path: "docs/readme.TXT"}
+	action, matched, _ = caseRule.Eval(upperEntry)
+	if !matched || action != syncrules.ActionInclude {
+		t.Errorf("Expected case-sensitive match for .TXT, got matched=%v action=%v", matched, action)
+	}
+
+	lowerEntry := syncrules.FileEntry{Path: "docs/readme.txt"}
+	action, matched, _ = caseRule.Eval(lowerEntry)
+	if matched || action != syncrules.ActionSkip {
+		t.Errorf("Expected case-sensitive mismatch for .txt, got matched=%v action=%v", matched, action)
+	}
+}
+
+func TestRuleSetHelperMethodsAndNilSafety(t *testing.T) {
+	// 1. nil safety
+	var nilRS *syncrules.RuleSet
+	if !nilRS.Empty() {
+		t.Error("Expected nil RuleSet to report Empty() == true")
+	}
+	if !nilRS.ShouldInclude(syncrules.FileEntry{Path: "test.txt"}) {
+		t.Error("Expected nil RuleSet to ShouldInclude by default")
+	}
+	if nilRS.ShouldExclude(syncrules.FileEntry{Path: "test.txt"}) {
+		t.Error("Expected nil RuleSet to not ShouldExclude")
+	}
+	if nilRS.ShouldPruneDir("any/dir") {
+		t.Error("Expected nil RuleSet to not ShouldPruneDir")
+	}
+
+	// 2. Helper methods on populated RuleSet
+	rs := syncrules.NewRuleSet()
+	if !rs.Empty() {
+		t.Error("Expected NewRuleSet() with no rules to report Empty() == true")
+	}
+
+	rs.PathRules = append(rs.PathRules, syncrules.PathRule{
+		Name:    "ExcludeCacheDir",
+		Pattern: "cache/**",
+		Action:  syncrules.ActionExclude,
+	})
+	if rs.Empty() {
+		t.Error("Expected populated RuleSet to not be empty")
+	}
+
+	if err := rs.Compile(); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	if rs.ShouldInclude(syncrules.FileEntry{Path: "cache/item.bin"}) {
+		t.Error("Expected cache/item.bin to not be included")
+	}
+	if !rs.ShouldExclude(syncrules.FileEntry{Path: "cache/item.bin"}) {
+		t.Error("Expected cache/item.bin to be excluded")
+	}
+	if !rs.ShouldPruneDir("cache") {
+		t.Error("Expected ShouldPruneDir('cache') to be true")
+	}
+	if rs.ShouldPruneDir("src") {
+		t.Error("Expected ShouldPruneDir('src') to be false")
+	}
+}
+
 func BenchmarkRuleEvaluation(b *testing.B) {
 	rs := syncrules.NewRuleSet()
 	rs.PathRules = []syncrules.PathRule{
