@@ -207,3 +207,147 @@ func TestAutoDetectYAMLWhenXMLMissing(t *testing.T) {
 		t.Errorf("Expected GUI user autoDetectUser, got %s", wrapper.RawCopy().GUI.User)
 	}
 }
+
+func TestComplexConfigurationRoundTrip(t *testing.T) {
+	device2 := protocol.DeviceID{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33}
+
+	cfg := config.New(testDeviceID)
+	cfg.GUI.User = "admin"
+	cfg.GUI.RawAddress = "0.0.0.0:8384"
+	cfg.Options.RawListenAddresses = []string{"default", "tcp://127.0.0.1:22000"}
+
+	// Add devices
+	devCfg := cfg.Defaults.Device.Copy()
+	devCfg.DeviceID = device2
+	devCfg.Name = "remote-node"
+	devCfg.Addresses = []string{"tcp://192.168.1.100:22000"}
+	cfg.Devices = append(cfg.Devices, devCfg)
+
+	// Add folders with versioning
+	fld := cfg.Defaults.Folder.Copy()
+	fld.ID = "docs"
+	fld.Label = "Documents"
+	fld.Path = "/data/docs"
+	fld.RescanIntervalS = 120
+	fld.Versioning = config.VersioningConfiguration{
+		Type: "staggered",
+		Params: map[string]string{
+			"maxAge": "30",
+		},
+	}
+	fld.Devices = []config.FolderDeviceConfiguration{
+		{DeviceID: testDeviceID},
+		{DeviceID: device2},
+	}
+	cfg.Folders = append(cfg.Folders, fld)
+
+	yamlBytes, err := yamlcfg.ToYAML(cfg)
+	if err != nil {
+		t.Fatalf("ToYAML failed: %v", err)
+	}
+
+	loaded, ver, err := yamlcfg.FromYAML(yamlBytes, testDeviceID)
+	if err != nil {
+		t.Fatalf("FromYAML failed: %v", err)
+	}
+
+	if ver != config.CurrentVersion {
+		t.Errorf("Expected version %d, got %d", config.CurrentVersion, ver)
+	}
+
+	if len(loaded.Folders) != 1 {
+		t.Fatalf("Expected 1 folder, got %d", len(loaded.Folders))
+	}
+	lf := loaded.Folders[0]
+	if lf.ID != "docs" || lf.Label != "Documents" || lf.Path != "/data/docs" {
+		t.Errorf("Folder basic fields mismatch: %+v", lf)
+	}
+	if lf.RescanIntervalS != 120 {
+		t.Errorf("Expected RescanIntervalS 120, got %d", lf.RescanIntervalS)
+	}
+	if lf.Versioning.Type != "staggered" || lf.Versioning.Params["maxAge"] != "30" {
+		t.Errorf("Versioning mismatch: %+v", lf.Versioning)
+	}
+	if len(lf.Devices) != 2 {
+		t.Errorf("Expected 2 devices in folder, got %d", len(lf.Devices))
+	}
+
+	if len(loaded.Devices) != 2 { // self device + remote-node
+		t.Fatalf("Expected 2 devices, got %d", len(loaded.Devices))
+	}
+}
+
+func TestFolderDefaultsDeepInheritance(t *testing.T) {
+	yamlInput := fmt.Sprintf(`
+version: %d
+folders:
+  - id: photos
+    path: /media/photos
+devices:
+  - deviceID: %s
+`, config.CurrentVersion, testDeviceID.String())
+
+	cfg, _, err := yamlcfg.FromYAML([]byte(yamlInput), testDeviceID)
+	if err != nil {
+		t.Fatalf("FromYAML failed: %v", err)
+	}
+
+	if len(cfg.Folders) != 1 {
+		t.Fatalf("Expected 1 folder, got %d", len(cfg.Folders))
+	}
+
+	f := cfg.Folders[0]
+	if f.ID != "photos" || f.Path != "/media/photos" {
+		t.Errorf("Unexpected folder: %+v", f)
+	}
+
+	// Verify defaults were copied from Defaults.Folder
+	if f.RescanIntervalS != cfg.Defaults.Folder.RescanIntervalS {
+		t.Errorf("Expected RescanIntervalS %d, got %d", cfg.Defaults.Folder.RescanIntervalS, f.RescanIntervalS)
+	}
+	if f.FSWatcherDelayS != cfg.Defaults.Folder.FSWatcherDelayS {
+		t.Errorf("Expected FSWatcherDelayS %v, got %v", cfg.Defaults.Folder.FSWatcherDelayS, f.FSWatcherDelayS)
+	}
+	if f.Order != cfg.Defaults.Folder.Order {
+		t.Errorf("Expected Order %v, got %v", cfg.Defaults.Folder.Order, f.Order)
+	}
+}
+
+func TestMalformedYAMLAndValidation(t *testing.T) {
+	// 1. Invalid YAML syntax
+	badSyntax := `
+version: 52
+folders: [unterminated list
+`
+	if err := yamlcfg.Validate([]byte(badSyntax), testDeviceID); err == nil {
+		t.Error("Expected error for syntax error in YAML, got nil")
+	}
+
+	// 2. Invalid Device ID in YAML
+	badDeviceID := `
+version: 52
+devices:
+  - deviceID: NOT-A-VALID-DEVICE-ID
+`
+	_, _, err := yamlcfg.FromYAML([]byte(badDeviceID), testDeviceID)
+	if err == nil {
+		t.Error("Expected error for invalid device ID in YAML, got nil")
+	}
+
+	// 3. Duplicate folder IDs
+	duplicateFolders := fmt.Sprintf(`
+version: %d
+folders:
+  - id: duplicate-id
+    path: /path/one
+  - id: duplicate-id
+    path: /path/two
+devices:
+  - deviceID: %s
+`, config.CurrentVersion, testDeviceID.String())
+
+	_, _, err = yamlcfg.FromYAML([]byte(duplicateFolders), testDeviceID)
+	if err == nil {
+		t.Error("Expected error for duplicate folder IDs, got nil")
+	}
+}
